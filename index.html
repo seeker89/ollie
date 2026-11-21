@@ -34,6 +34,7 @@
   #connectCard p { margin: 8px 0 0; color: var(--dim); font-size: 13px; }
   #msg { margin-top: 10px; font-size: 13px; color: var(--warn); white-space: pre-line; }
   #msg:empty { display: none; }
+  [hidden] { display: none !important; }
   label[hidden] { display: none !important; }
   .controls[hidden] { display: none !important; }
 
@@ -161,7 +162,7 @@
   addEventListener('load', function () {
     show((window.__ollieReady ? 'Controller started OK' : 'CONTROLLER SCRIPT DID NOT START') +
       ' · bluetooth API: ' + (navigator.bluetooth ? 'yes' : 'no') +
-      ' · requestDevice: ' + (navigator.bluetooth && typeof navigator.bluetooth.requestDevice) + ' · build 4');
+      ' · requestDevice: ' + (navigator.bluetooth && typeof navigator.bluetooth.requestDevice) + ' · build 5');
   });
 })();
 </script>
@@ -238,7 +239,7 @@ class Ollie {
     this.log = log; this.queue = []; this.busy = false; this.pending = new Map();
     this.parser = new ResponseParser(p => this._onPacket(p), e => log('rx ' + e));
     this.onDisconnect = () => {};
-    this.stats = { tx: 0, rx: 0, err: 0, last: '' }; this.onStats = () => {};
+    this.stats = { tx: 0, rx: 0, err: 0, last: '', alive: null, rewakes: 0 }; this.onStats = () => {}; this.onRewake = () => {};
   }
   get connected() { return !!(this.device && this.device.gatt.connected && this.cmd); }
 
@@ -259,10 +260,8 @@ class Ollie {
     this.cmd = await robot.getCharacteristic(UUID.commands);
     stage('Unlocking…');
     // Developer-mode unlock: anti-DoS string, TX power 7, wake the main CPU
-    await this._writeChar(antiDos, new TextEncoder().encode('011i3'), true);
-    await this._writeChar(tx, Uint8Array.of(7), true);
-    await this._writeChar(wake, Uint8Array.of(1), true);
-    this.log('unlocked: anti-DoS → tx power → wake');
+    this.radio = { antiDos, tx, wake };
+    await this._unlock();
     try {
       this.rsp = await robot.getCharacteristic(UUID.response);
       this.rsp.addEventListener('characteristicvaluechanged', e => {
@@ -274,6 +273,33 @@ class Ollie {
     await new Promise(r => setTimeout(r, 300)); // give the CPU a moment to boot
     Proto.resetSeq();
     return this.device.name || 'Ollie';
+  }
+
+  async _unlock() {
+    const { antiDos, tx, wake } = this.radio;
+    await this._writeChar(antiDos, new TextEncoder().encode('011i3'), true);
+    await this._writeChar(tx, Uint8Array.of(7), true);
+    await this._writeChar(wake, Uint8Array.of(1), true);
+    this.log('unlocked: anti-DoS → tx power → wake');
+  }
+
+  // The radio chip stays connected even when the main processor is asleep or has reset, in which case
+  // writes still "succeed" but nothing happens. Ping it; after two missed replies, wake it again.
+  async health() {
+    if (!this.connected || this.healthBusy) return;
+    this.healthBusy = true;
+    try {
+      await this.send(Proto.ping());
+      this.stats.alive = true; this.misses = 0;
+    } catch (e) {
+      this.stats.alive = false; this.misses = (this.misses || 0) + 1;
+      this.log('ping: ' + e.message);
+      if (this.misses >= 2 && this.connected) {
+        this.misses = 0; this.stats.rewakes++;
+        try { await this._unlock(); await new Promise(r => setTimeout(r, 300)); this.onRewake(); }
+        catch (e2) { this.stats.last = 're-wake failed: ' + e2.message; this.log(this.stats.last); }
+      }
+    } finally { this.healthBusy = false; this.onStats(); }
   }
 
   disconnect() { if (this.device && this.device.gatt.connected) this.device.gatt.disconnect(); }
@@ -288,6 +314,7 @@ class Ollie {
   // available one and remember the first that works for this characteristic and mode.
   async _writeChar(ch, bytes, withResponse) {
     const props = ch.properties || {};
+    if (withResponse && props.write === false && props.writeWithoutResponse) withResponse = false;
     const order = withResponse
       ? ['writeValueWithResponse', 'writeValue', 'writeValueWithoutResponse']
       : (props.writeWithoutResponse === false
@@ -327,7 +354,7 @@ class Ollie {
     this.busy = true;
     while (this.queue.length && this.cmd) {
       const { pkt } = this.queue.shift();
-      try { await this._writeChar(this.cmd, pkt.bytes, false); this.stats.tx++; this.log('tx ' + hex(pkt.bytes)); }
+      try { await this._writeChar(this.cmd, pkt.bytes, true); this.stats.tx++; this.log('tx ' + hex(pkt.bytes)); }
       catch (e) { this.stats.err++; this.stats.last = String(e && e.message || e); this.log('tx error: ' + this.stats.last); await new Promise(r => setTimeout(r, 30)); }
       this.onStats();
     }
@@ -363,7 +390,13 @@ const $ = id => document.getElementById(id);
 const logEl = $('log');
 const log = s => { logEl.textContent += s + '\n'; if (logEl.textContent.length > 20000) logEl.textContent = logEl.textContent.slice(-15000); logEl.scrollTop = logEl.scrollHeight; };
 const ollie = new Ollie(log);
-ollie.onStats = () => { const t = ollie.stats; $('stats').textContent = `sent ${t.tx} · received ${t.rx} · failed ${t.err}` + (t.last ? ' · ' + t.last : ''); };
+ollie.onStats = () => {
+  const t = ollie.stats;
+  const link = t.alive === null ? 'checking Ollie…' : t.alive ? 'Ollie is answering' : 'OLLIE NOT ANSWERING';
+  $('stats').textContent = `${link} · sent ${t.tx} · received ${t.rx} · failed ${t.err}` + (t.rewakes ? ` · re-woken ${t.rewakes}×` : '') + (t.last ? ' · ' + t.last : '');
+};
+ollie.onRewake = () => { ollie.stabilization(true); ollie.backLed(0); if (!S.aiming) ollie.rgb(...S.color); };
+setInterval(() => ollie.health(), 2500);
 
 const S = {
   heading: 0,        // heading Ollie should face (0 = calibrated forward)
@@ -399,6 +432,7 @@ $('connectBtn').onclick = async () => {
     await ollie.backLed(0);
     applyColor(...S.color);
     refreshBattery();
+    ollie.health();
   } catch (e) {
     setStatus('Not connected');
     const m = String(e && e.message || e);
