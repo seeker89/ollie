@@ -162,7 +162,7 @@
   addEventListener('load', function () {
     show((window.__ollieReady ? 'Controller started OK' : 'CONTROLLER SCRIPT DID NOT START') +
       ' · bluetooth API: ' + (navigator.bluetooth ? 'yes' : 'no') +
-      ' · requestDevice: ' + (navigator.bluetooth && typeof navigator.bluetooth.requestDevice) + ' · build 5');
+      ' · requestDevice: ' + (navigator.bluetooth && typeof navigator.bluetooth.requestDevice) + ' · build 6');
   });
 })();
 </script>
@@ -362,7 +362,10 @@ class Ollie {
   }
 
   _onPacket(p) {
-    if (p.type !== 'response') return;
+    if (p.type !== 'response') {
+      this.stats.last = 'async message 0x' + p.id.toString(16).padStart(2, '0') + (p.data.length ? ' [' + hex(p.data) + ']' : '');
+      this.log(this.stats.last); this.onStats(); return;
+    }
     const w = this.pending.get(p.seq);
     if (!w) return;
     clearTimeout(w.t); this.pending.delete(p.seq);
@@ -388,7 +391,8 @@ class Ollie {
 /* ===================== UI ===================== */
 const $ = id => document.getElementById(id);
 const logEl = $('log');
-const log = s => { logEl.textContent += s + '\n'; if (logEl.textContent.length > 20000) logEl.textContent = logEl.textContent.slice(-15000); logEl.scrollTop = logEl.scrollHeight; };
+const t0 = performance.now();
+const log = s => { logEl.textContent += ((performance.now() - t0) / 1000).toFixed(1).padStart(6) + '  ' + s + '\n'; if (logEl.textContent.length > 20000) logEl.textContent = logEl.textContent.slice(-15000); logEl.scrollTop = logEl.scrollHeight; };
 const ollie = new Ollie(log);
 ollie.onStats = () => {
   const t = ollie.stats;
