@@ -143,6 +143,11 @@
 </div>
 
 <script>
+// Surface any script error on the page itself — phones have no console to look at.
+addEventListener('error', e => { const m = document.getElementById('msg'); if (m) m.textContent = 'Page error: ' + (e.message || e) + (e.lineno ? ' (line ' + e.lineno + ')' : ''); });
+addEventListener('unhandledrejection', e => { const m = document.getElementById('msg'); if (m) m.textContent = 'Page error: ' + (e.reason && e.reason.message || e.reason); });
+</script>
+<script>
 /* ===================== Sphero API v1 over BLE (Ollie / BB-8 / SPRK+) ===================== */
 const UUID = {
   robotSvc: '22bb746f-2ba0-7554-2d6f-726568705327',
@@ -217,18 +222,22 @@ class Ollie {
   }
   get connected() { return !!(this.device && this.device.gatt.connected && this.cmd); }
 
-  async connect(showAll) {
+  async connect(showAll, stage = () => {}) {
     const optionalServices = [UUID.robotSvc, UUID.radioSvc];
+    stage('Waiting for device picker…');
     this.device = await navigator.bluetooth.requestDevice(showAll
       ? { acceptAllDevices: true, optionalServices }
       : { filters: [{ namePrefix: '2B-' }], optionalServices });
     this.device.addEventListener('gattserverdisconnected', () => this._cleanup());
     this.log('connecting to ' + (this.device.name || this.device.id));
+    stage('Connecting to ' + (this.device.name || 'device') + '…');
     const server = await this.device.gatt.connect();
+    stage('Finding Sphero services…');
     const radio = await server.getPrimaryService(UUID.radioSvc);
     const robot = await server.getPrimaryService(UUID.robotSvc);
     const [antiDos, tx, wake] = await Promise.all([UUID.antiDos, UUID.txPower, UUID.wake].map(u => radio.getCharacteristic(u)));
     this.cmd = await robot.getCharacteristic(UUID.commands);
+    stage('Unlocking…');
     // Developer-mode unlock: anti-DoS string, TX power 7, wake the main CPU
     await this._writeChar(antiDos, new TextEncoder().encode('011i3'), true);
     await this._writeChar(tx, Uint8Array.of(7), true);
@@ -341,8 +350,11 @@ $('connectBtn').onclick = async () => {
   showMsg('');
   setStatus('Connecting…', 'busy');
   $('connectBtn').disabled = true;
+  let stageName = '';
+  const slow = setTimeout(() => showMsg('Still at: ' + stageName + '\nIf no device list appeared, check that Bluetooth is on and that this browser is allowed to use it (iPhone: Settings → Bluefy → Bluetooth), then reload the page.'), 12000);
   try {
-    const name = await ollie.connect($('showAll').checked);
+    const name = await ollie.connect($('showAll').checked, s => { stageName = s; setStatus(s, 'busy'); log(s); });
+    clearTimeout(slow); showMsg('');
     setStatus(name, 'on');
     $('controls').hidden = false; $('hint').hidden = true; $('showAllRow').hidden = true;
     $('connectBtn').hidden = true; $('disconnectBtn').hidden = false;
@@ -353,13 +365,14 @@ $('connectBtn').onclick = async () => {
   } catch (e) {
     setStatus('Not connected');
     const m = String(e && e.message || e);
-    if (/cancel/i.test(m)) showMsg('');
+    clearTimeout(slow);
+    if (/cancel/i.test(m)) showMsg("No device was chosen (" + m + ").\nIf the list was empty: wake Ollie by plugging it into USB for a few seconds, keep it close, and try again — or tick \"Show all Bluetooth devices\" below.");
     else if (e.name === 'SecurityError' || /permissions policy|disallowed/i.test(m))
       showMsg('Bluetooth is blocked inside this embedded view. Open the page in its own browser tab: ' + location.href);
     else if (/service/i.test(m)) showMsg("Connected, but that device doesn't expose the Sphero services. Is it an Ollie (2B-xxxx)?\n" + m);
     else showMsg('Connection failed: ' + m + '\nTips: plug Ollie into USB for a few seconds to wake it, keep it close, and make sure no other app is connected to it.');
     ollie.disconnect();
-  } finally { $('connectBtn').disabled = !navigator.bluetooth; }
+  } finally { clearTimeout(slow); $('connectBtn').disabled = !navigator.bluetooth; }
 };
 $('disconnectBtn').onclick = () => { ollie.stop(S.heading); setTimeout(() => ollie.disconnect(), 150); };
 ollie.onDisconnect = () => {
