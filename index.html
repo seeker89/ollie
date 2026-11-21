@@ -84,6 +84,7 @@
   <p id="hint">Turn Ollie on (plug it into USB for a moment if it seems asleep), then tap Connect and pick the device named <b>2B-xxxx</b>.</p>
   <label id="showAllRow" style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px;color:var(--dim)"><input type="checkbox" id="showAll"> Show all Bluetooth devices (if Ollie doesn't appear)</label>
   <div id="msg"></div>
+  <div id="diag" style="margin-top:8px;font:11px/1.4 ui-monospace,monospace;color:var(--dim);white-space:pre-wrap;word-break:break-word"></div>
 </div>
 
 <div class="controls" id="controls" hidden>
@@ -143,11 +144,28 @@
 </div>
 
 <script>
-// Surface any script error on the page itself — phones have no console to look at.
-addEventListener('error', e => { const m = document.getElementById('msg'); if (m) m.textContent = 'Page error: ' + (e.message || e) + (e.lineno ? ' (line ' + e.lineno + ')' : ''); });
-addEventListener('unhandledrejection', e => { const m = document.getElementById('msg'); if (m) m.textContent = 'Page error: ' + (e.reason && e.reason.message || e.reason); });
+// Diagnostics shown on the page itself — phones have no console to look at.
+(function () {
+  var seen = [];
+  function show(t) {
+    if (seen.indexOf(t) < 0) seen.push(t);
+    var d = document.getElementById('diag'); if (d) d.textContent = seen.join('\n');
+  }
+  window.__diag = show;
+  addEventListener('error', function (e) {
+    var where = (e.filename ? e.filename.split('/').pop() || 'page' : 'injected/unknown script') + (e.lineno ? ':' + e.lineno + ':' + e.colno : '');
+    show('Script error: ' + (e.message || e) + ' [' + where + ']' + (e.error && e.error.stack ? '\n' + String(e.error.stack).split('\n').slice(0, 3).join('\n') : ''));
+  });
+  addEventListener('unhandledrejection', function (e) { show('Unhandled: ' + (e.reason && e.reason.message || e.reason)); });
+  addEventListener('load', function () {
+    show((window.__ollieReady ? 'Controller started OK' : 'CONTROLLER SCRIPT DID NOT START') +
+      ' · bluetooth API: ' + (navigator.bluetooth ? 'yes' : 'no') +
+      ' · requestDevice: ' + (navigator.bluetooth && typeof navigator.bluetooth.requestDevice) + ' · build 3');
+  });
+})();
 </script>
 <script>
+(() => { // own scope, so nothing a browser injects into the page can clash with these names
 /* ===================== Sphero API v1 over BLE (Ollie / BB-8 / SPRK+) ===================== */
 const UUID = {
   robotSvc: '22bb746f-2ba0-7554-2d6f-726568705327',
@@ -535,6 +553,8 @@ function tick(now) {
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
+window.__ollieReady = true;
+})();
 </script>
 </body>
 </html>
