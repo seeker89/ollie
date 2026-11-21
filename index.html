@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0d1117">
+<title>Ollie Remote</title>
+<style>
+  :root {
+    --bg: #0d1117; --card: #161b22; --line: #2a313c; --text: #e6edf3; --dim: #8b949e;
+    --accent: #2aa7e8; --accent2: #1b7fb3; --ok: #3fb950; --warn: #d29922; --bad: #f85149;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { padding: env(safe-area-inset-top) 14px calc(env(safe-area-inset-bottom) + 18px); max-width: 560px; margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 10px; padding: 14px 0 10px; }
+  header h1 { font-size: 19px; margin: 0; letter-spacing: .2px; flex: 1; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--dim);
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+  .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .dot.busy { background: var(--warn); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin: 10px 0; }
+  .card h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--dim); text-transform: uppercase; letter-spacing: .6px; }
+  button { font: inherit; color: var(--text); background: #21262d; border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 14px; cursor: pointer; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+  button:active { transform: translateY(1px); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #041018; font-weight: 650; }
+  button.danger { background: #3a1517; border-color: #6e2427; color: #ffb3ae; }
+  button:disabled { opacity: .45; cursor: default; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .grow { flex: 1; }
+  #connectCard p { margin: 8px 0 0; color: var(--dim); font-size: 13px; }
+  #msg { margin-top: 10px; font-size: 13px; color: var(--warn); white-space: pre-line; }
+  #msg:empty { display: none; }
+  label[hidden] { display: none !important; }
+  .controls[hidden] { display: none !important; }
+
+  /* joystick */
+  #padWrap { display: flex; justify-content: center; padding: 6px 0 2px; }
+  #pad { position: relative; width: min(78vw, 300px); aspect-ratio: 1; border-radius: 50%;
+    background: radial-gradient(circle, #1c2430 0%, #121820 70%); border: 2px solid var(--line);
+    touch-action: none; user-select: none; -webkit-user-select: none; }
+  #pad::before, #pad::after { content: ""; position: absolute; background: var(--line); }
+  #pad::before { left: 50%; top: 8%; bottom: 8%; width: 1px; }
+  #pad::after { top: 50%; left: 8%; right: 8%; height: 1px; }
+  #pad .fwd { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); font-size: 11px; color: var(--dim); }
+  #knob { position: absolute; left: 50%; top: 50%; width: 30%; aspect-ratio: 1; margin: -15% 0 0 -15%;
+    border-radius: 50%; background: radial-gradient(circle at 35% 30%, #6cc8f5, var(--accent) 45%, var(--accent2));
+    box-shadow: 0 6px 18px #0009; z-index: 2; pointer-events: none; transition: transform .12s ease-out; }
+  #pad.active #knob { transition: none; }
+  #readout { text-align: center; color: var(--dim); font-size: 13px; font-variant-numeric: tabular-nums; margin-top: 6px; }
+
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .lbl { display: flex; justify-content: space-between; font-size: 13px; color: var(--dim); margin-bottom: 4px; }
+  .swatches { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .sw { width: 36px; height: 36px; border-radius: 50%; border: 2px solid #0006; padding: 0; }
+  .sw.sel { outline: 2px solid var(--text); outline-offset: 2px; }
+  input[type=color] { width: 40px; height: 40px; border: none; background: none; padding: 0; }
+  .spin { flex: 1; padding: 14px; font-weight: 600; }
+  #aimPanel[hidden] { display: none; }
+  #aimPanel p { margin: 0 0 10px; color: var(--dim); font-size: 13px; }
+  .kbd { font-size: 12px; color: var(--dim); }
+  .kbd b { display: inline-block; min-width: 20px; text-align: center; border: 1px solid var(--line);
+    border-radius: 5px; padding: 0 5px; color: var(--text); font-weight: 500; margin: 0 1px; }
+  details summary { cursor: pointer; color: var(--dim); font-size: 13px; }
+  #log { max-height: 180px; overflow: auto; font: 11px/1.45 ui-monospace, Menlo, Consolas, monospace;
+    color: #9fb1c3; white-space: pre-wrap; margin-top: 8px; }
+  @media (hover: none) { .kbdonly { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ollie Remote</h1>
+  <span class="pill"><span class="dot" id="dot"></span><span id="status">Not connected</span></span>
+</header>
+
+<div class="card" id="connectCard">
+  <div class="row">
+    <button class="primary grow" id="connectBtn">Connect to Ollie</button>
+    <button id="disconnectBtn" class="grow" hidden>Disconnect</button>
+  </div>
+  <p id="hint">Turn Ollie on (plug it into USB for a moment if it seems asleep), then tap Connect and pick the device named <b>2B-xxxx</b>.</p>
+  <label id="showAllRow" style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px;color:var(--dim)"><input type="checkbox" id="showAll"> Show all Bluetooth devices (if Ollie doesn't appear)</label>
+  <div id="msg"></div>
+</div>
+
+<div class="controls" id="controls" hidden>
+  <div class="card">
+    <div id="padWrap"><div id="pad"><span class="fwd">forward</span><div id="knob"></div></div></div>
+    <div id="readout">speed 0 · heading 0°</div>
+    <div style="margin-top:12px">
+      <div class="lbl"><span>Top speed</span><span id="capVal"></span></div>
+      <input type="range" id="cap" min="20" max="255" value="110">
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="spin" id="spinL">⟲ Spin</button>
+      <button class="danger spin" id="stopBtn">Stop</button>
+      <button class="spin" id="spinR">Spin ⟳</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Aim</h2>
+    <div class="row" id="aimClosed">
+      <span class="grow" style="color:var(--dim);font-size:13px">If "forward" on the joystick isn't Ollie's forward, re-aim it.</span>
+      <button id="aimBtn">Aim</button>
+    </div>
+    <div id="aimPanel" hidden>
+      <p>Ollie's tail light is on. Rotate it until the tail light points at you, then tap Done.</p>
+      <input type="range" id="aimRange" min="-180" max="180" value="0">
+      <div class="row" style="margin-top:8px">
+        <button id="aimL">−10°</button><button id="aimR">+10°</button>
+        <span class="grow"></span>
+        <button class="primary" id="aimDone">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Colour</h2>
+    <div class="swatches" id="swatches">
+      <input type="color" id="colorPick" value="#2aa7e8" title="Custom colour">
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <span class="grow" style="font-size:13px;color:var(--dim)">Battery: <span id="batt">–</span></span>
+      <button id="sleepBtn">Put to sleep</button>
+    </div>
+    <div class="kbd kbdonly" style="margin-top:10px">
+      Keyboard: <b>W</b><b>A</b><b>S</b><b>D</b> or arrows to drive · <b>Shift</b> full speed ·
+      <b>Q</b>/<b>E</b> spin · <b>Space</b> stop · <b>1</b>–<b>8</b> colours
+    </div>
+  </div>
+
+  <details class="card">
+    <summary>Protocol log</summary>
+    <div id="log"></div>
+  </details>
+</div>
+
+<script>
+/* ===================== Sphero API v1 over BLE (Ollie / BB-8 / SPRK+) ===================== */
+const UUID = {
+  robotSvc: '22bb746f-2ba0-7554-2d6f-726568705327',
+  commands: '22bb746f-2ba1-7554-2d6f-726568705327',
+  response: '22bb746f-2ba6-7554-2d6f-726568705327',
+  radioSvc: '22bb746f-2bb0-7554-2d6f-726568705327',
+  antiDos:  '22bb746f-2bbd-7554-2d6f-726568705327',
+  txPower:  '22bb746f-2bb2-7554-2d6f-726568705327',
+  wake:     '22bb746f-2bbf-7554-2d6f-726568705327',
+};
+
+// PROTO-BEGIN
+const Proto = (() => {
+  let seq = 0;
+  const byte = v => Math.max(0, Math.min(255, Math.round(v)));
+  const deg = h => ((Math.round(h) % 360) + 360) % 360;
+  const u16 = v => [(v >> 8) & 0xff, v & 0xff];
+  // Packet: FF, FF|FE, DID, CID, SEQ, DLEN, DATA..., CHK   (CHK = ~sum(DID..DATA) & 0xFF)
+  function packet(did, cid, data = [], answer = false) {
+    seq = (seq + 1) & 0xff;
+    const body = [did, cid, seq, data.length + 1, ...data];
+    const chk = ~body.reduce((a, b) => a + b, 0) & 0xff;
+    return { seq, answer, bytes: Uint8Array.from([0xff, answer ? 0xff : 0xfe, ...body, chk]) };
+  }
+  return {
+    packet,
+    ping:          ()            => packet(0x00, 0x01, [], true),
+    powerState:    ()            => packet(0x00, 0x20, [], true),
+    sleep:         ()            => packet(0x00, 0x22, [0, 0, 0, 0, 0]),
+    setHeading:    h             => packet(0x02, 0x01, u16(deg(h))),
+    stabilization: on            => packet(0x02, 0x02, [on ? 1 : 0]),
+    rgb:           (r, g, b)     => packet(0x02, 0x20, [byte(r), byte(g), byte(b), 0]),
+    backLed:       v             => packet(0x02, 0x21, [byte(v)]),
+    roll:          (s, h, go = 1) => packet(0x02, 0x30, [byte(s), ...u16(deg(h)), go ? 1 : 0]),
+    // modes: 0 off, 1 forward, 2 reverse, 3 brake, 4 ignore
+    rawMotors:     (lm, lp, rm, rp) => packet(0x02, 0x33, [lm, byte(lp), rm, byte(rp)]),
+    resetSeq() { seq = 0; },
+  };
+})();
+
+class ResponseParser {
+  constructor(onPacket, onError) { this.buf = []; this.onPacket = onPacket; this.onError = onError || (() => {}); }
+  push(chunk) {
+    for (const b of chunk) this.buf.push(b);
+    for (;;) {
+      let i = 0;
+      while (i < this.buf.length - 1 && !(this.buf[i] === 0xff && (this.buf[i + 1] === 0xff || this.buf[i + 1] === 0xfe))) i++;
+      if (i > 0) this.buf.splice(0, i);
+      if (this.buf.length < 5) return;
+      const sync = this.buf[1] === 0xff;
+      const dlen = sync ? this.buf[4] : (this.buf[3] << 8) | this.buf[4];
+      if (dlen < 1 || dlen > 2048) { this.buf.shift(); continue; }
+      const total = 5 + dlen;
+      if (this.buf.length < total) return;
+      const p = this.buf.splice(0, total);
+      let sum = 0; for (let k = 2; k < total - 1; k++) sum += p[k];
+      if ((~sum & 0xff) !== p[total - 1]) { this.onError('bad checksum'); continue; }
+      const data = p.slice(5, total - 1);
+      this.onPacket(sync ? { type: 'response', code: p[2], seq: p[3], data } : { type: 'async', id: p[2], data });
+    }
+  }
+}
+// PROTO-END
+
+const hex = a => Array.from(a, b => b.toString(16).padStart(2, '0')).join(' ');
+
+class Ollie {
+  constructor(log) {
+    this.log = log; this.queue = []; this.busy = false; this.pending = new Map();
+    this.parser = new ResponseParser(p => this._onPacket(p), e => log('rx ' + e));
+    this.onDisconnect = () => {};
+  }
+  get connected() { return !!(this.device && this.device.gatt.connected && this.cmd); }
+
+  async connect(showAll) {
+    const optionalServices = [UUID.robotSvc, UUID.radioSvc];
+    this.device = await navigator.bluetooth.requestDevice(showAll
+      ? { acceptAllDevices: true, optionalServices }
+      : { filters: [{ namePrefix: '2B-' }], optionalServices });
+    this.device.addEventListener('gattserverdisconnected', () => this._cleanup());
+    this.log('connecting to ' + (this.device.name || this.device.id));
+    const server = await this.device.gatt.connect();
+    const radio = await server.getPrimaryService(UUID.radioSvc);
+    const robot = await server.getPrimaryService(UUID.robotSvc);
+    const [antiDos, tx, wake] = await Promise.all([UUID.antiDos, UUID.txPower, UUID.wake].map(u => radio.getCharacteristic(u)));
+    this.cmd = await robot.getCharacteristic(UUID.commands);
+    // Developer-mode unlock: anti-DoS string, TX power 7, wake the main CPU
+    await this._writeChar(antiDos, new TextEncoder().encode('011i3'), true);
+    await this._writeChar(tx, Uint8Array.of(7), true);
+    await this._writeChar(wake, Uint8Array.of(1), true);
+    this.log('unlocked: anti-DoS → tx power → wake');
+    try {
+      this.rsp = await robot.getCharacteristic(UUID.response);
+      this.rsp.addEventListener('characteristicvaluechanged', e => {
+        const v = e.target.value, bytes = new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+        this.log('rx ' + hex(bytes)); this.parser.push(bytes);
+      });
+      await this.rsp.startNotifications();
+    } catch (e) { this.log('notifications unavailable: ' + e.message); }
+    await new Promise(r => setTimeout(r, 300)); // give the CPU a moment to boot
+    Proto.resetSeq();
+    return this.device.name || 'Ollie';
+  }
+
+  disconnect() { if (this.device && this.device.gatt.connected) this.device.gatt.disconnect(); }
+
+  _cleanup() {
+    this.cmd = null; this.queue = []; this.busy = false;
+    for (const { reject, t } of this.pending.values()) { clearTimeout(t); reject(new Error('disconnected')); }
+    this.pending.clear(); this.onDisconnect();
+  }
+
+  async _writeChar(ch, bytes, withResponse) {
+    if (!withResponse && ch.properties.writeWithoutResponse && ch.writeValueWithoutResponse) return ch.writeValueWithoutResponse(bytes);
+    if (ch.writeValueWithResponse) return ch.writeValueWithResponse(bytes);
+    return ch.writeValue(bytes);
+  }
+
+  // key: coalesce — a newer packet with the same key replaces an unsent older one (keeps driving snappy)
+  send(pkt, key) {
+    if (!this.connected) return Promise.resolve(null);
+    let result = Promise.resolve(null);
+    if (pkt.answer) {
+      result = new Promise((resolve, reject) => {
+        const t = setTimeout(() => { this.pending.delete(pkt.seq); reject(new Error('timeout')); }, 2000);
+        this.pending.set(pkt.seq, { resolve, reject, t });
+      });
+    }
+    const item = { pkt, key };
+    const idx = key ? this.queue.findIndex(q => q.key === key) : -1;
+    if (idx >= 0) this.queue[idx] = item; else this.queue.push(item);
+    this._pump();
+    return result;
+  }
+
+  async _pump() {
+    if (this.busy) return;
+    this.busy = true;
+    while (this.queue.length && this.cmd) {
+      const { pkt } = this.queue.shift();
+      try { await this._writeChar(this.cmd, pkt.bytes, false); this.log('tx ' + hex(pkt.bytes)); }
+      catch (e) { this.log('tx error: ' + e.message); await new Promise(r => setTimeout(r, 30)); }
+    }
+    this.busy = false;
+  }
+
+  _onPacket(p) {
+    if (p.type !== 'response') return;
+    const w = this.pending.get(p.seq);
+    if (!w) return;
+    clearTimeout(w.t); this.pending.delete(p.seq);
+    p.code === 0 ? w.resolve(p) : w.reject(new Error('error code ' + p.code));
+  }
+
+  roll(speed, heading, go = true) { return this.send(Proto.roll(speed, heading, go), 'drive'); }
+  stop(heading) { this.queue = this.queue.filter(q => q.key !== 'drive'); return this.send(Proto.roll(0, heading, false), 'drive'); }
+  rgb(r, g, b) { return this.send(Proto.rgb(r, g, b), 'rgb'); }
+  backLed(v) { return this.send(Proto.backLed(v), 'back'); }
+  setHeading(h) { return this.send(Proto.setHeading(h)); }
+  stabilization(on) { return this.send(Proto.stabilization(on)); }
+  rawMotors(lm, lp, rm, rp) { return this.send(Proto.rawMotors(lm, lp, rm, rp), 'drive'); }
+  sleep() { return this.send(Proto.sleep()); }
+  async power() {
+    const p = await this.send(Proto.powerState());
+    if (!p || p.data.length < 4) return null;
+    const d = p.data;
+    return { state: d[1], volts: ((d[2] << 8) | d[3]) / 100 };
+  }
+}
+
+/* ===================== UI ===================== */
+const $ = id => document.getElementById(id);
+const logEl = $('log');
+const log = s => { logEl.textContent += s + '\n'; if (logEl.textContent.length > 20000) logEl.textContent = logEl.textContent.slice(-15000); logEl.scrollTop = logEl.scrollHeight; };
+const ollie = new Ollie(log);
+
+const S = {
+  heading: 0,        // heading Ollie should face (0 = calibrated forward)
+  joy: null,         // {heading, mag} while the joystick is held
+  keys: new Set(),
+  spinning: 0,       // -1 / 0 / 1
+  aiming: false, aimBase: 0,
+  last: { speed: 0, heading: 0, t: 0 },
+  color: [42, 167, 232],
+};
+
+function setStatus(text, kind) { $('status').textContent = text; $('dot').className = 'dot ' + (kind || ''); }
+function showMsg(t) { $('msg').textContent = t || ''; }
+
+if (!navigator.bluetooth) {
+  $('connectBtn').disabled = true;
+  showMsg("This browser can't use Bluetooth.\n• Android: open this page in Chrome.\n• Windows / Mac / ChromeOS: Chrome or Edge.\n• iPhone / iPad: install the free \"Bluefy\" browser and open this page there.\n• Linux: Chrome with chrome://flags/#enable-experimental-web-platform-features on.");
+}
+
+$('connectBtn').onclick = async () => {
+  showMsg('');
+  setStatus('Connecting…', 'busy');
+  $('connectBtn').disabled = true;
+  try {
+    const name = await ollie.connect($('showAll').checked);
+    setStatus(name, 'on');
+    $('controls').hidden = false; $('hint').hidden = true; $('showAllRow').hidden = true;
+    $('connectBtn').hidden = true; $('disconnectBtn').hidden = false;
+    await ollie.stabilization(true);
+    await ollie.backLed(0);
+    applyColor(...S.color);
+    refreshBattery();
+  } catch (e) {
+    setStatus('Not connected');
+    const m = String(e && e.message || e);
+    if (/cancel/i.test(m)) showMsg('');
+    else if (e.name === 'SecurityError' || /permissions policy|disallowed/i.test(m))
+      showMsg('Bluetooth is blocked inside this embedded view. Open the page in its own browser tab: ' + location.href);
+    else if (/service/i.test(m)) showMsg("Connected, but that device doesn't expose the Sphero services. Is it an Ollie (2B-xxxx)?\n" + m);
+    else showMsg('Connection failed: ' + m + '\nTips: plug Ollie into USB for a few seconds to wake it, keep it close, and make sure no other app is connected to it.');
+    ollie.disconnect();
+  } finally { $('connectBtn').disabled = !navigator.bluetooth; }
+};
+$('disconnectBtn').onclick = () => { ollie.stop(S.heading); setTimeout(() => ollie.disconnect(), 150); };
+ollie.onDisconnect = () => {
+  setStatus('Disconnected'); $('controls').hidden = true; $('hint').hidden = false; $('showAllRow').hidden = false;
+  $('connectBtn').hidden = false; $('disconnectBtn').hidden = true; $('batt').textContent = '–';
+  S.joy = null; S.keys.clear(); S.spinning = 0; exitAim(false);
+};
+
+async function refreshBattery() {
+  if (!ollie.connected) return;
+  try {
+    const p = await ollie.power();
+    if (p) $('batt').textContent = `${p.volts.toFixed(2)} V · ${['?', 'charging', 'OK', 'low', 'critical'][p.state] || '?'}`;
+  } catch (e) { log('battery: ' + e.message); }
+}
+setInterval(refreshBattery, 30000);
+
+/* ---- speed cap ---- */
+const cap = () => +$('cap').value;
+const showCap = () => $('capVal').textContent = Math.round(cap() / 255 * 100) + '%';
+$('cap').oninput = showCap; showCap();
+
+/* ---- joystick ---- */
+const pad = $('pad'), knob = $('knob');
+let padPointer = null;
+function padMove(e) {
+  const r = pad.getBoundingClientRect();
+  const R = r.width / 2, cx = r.left + R, cy = r.top + R;
+  let dx = e.clientX - cx, dy = e.clientY - cy;
+  const dist = Math.hypot(dx, dy), lim = R * 0.72;
+  if (dist > lim) { dx *= lim / dist; dy *= lim / dist; }
+  knob.style.transform = `translate(${dx}px, ${dy}px)`;
+  let mag = Math.min(1, dist / lim);
+  mag = mag < 0.12 ? 0 : (mag - 0.12) / 0.88;
+  const heading = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;
+  S.joy = { heading, mag };
+}
+pad.addEventListener('pointerdown', e => {
+  if (S.aiming) return;
+  padPointer = e.pointerId; pad.setPointerCapture(e.pointerId); pad.classList.add('active'); padMove(e);
+});
+pad.addEventListener('pointermove', e => { if (e.pointerId === padPointer) padMove(e); });
+const padEnd = e => {
+  if (e.pointerId !== padPointer) return;
+  padPointer = null; pad.classList.remove('active'); knob.style.transform = ''; S.joy = null;
+};
+pad.addEventListener('pointerup', padEnd); pad.addEventListener('pointercancel', padEnd);
+
+/* ---- spin (raw motors) ---- */
+function startSpin(dir) {
+  if (S.aiming || !ollie.connected) return;
+  S.spinning = dir;
+  const p = cap();
+  dir > 0 ? ollie.rawMotors(1, p, 2, p) : ollie.rawMotors(2, p, 1, p);
+}
+function endSpin() {
+  if (!S.spinning) return;
+  S.spinning = 0;
+  ollie.rawMotors(0, 0, 0, 0);
+  ollie.stabilization(true);       // raw motors switch stabilisation off; turn it back on for roll
+  ollie.stop(S.heading);
+}
+for (const [id, dir] of [['spinL', -1], ['spinR', 1]]) {
+  const b = $(id);
+  b.addEventListener('pointerdown', e => { b.setPointerCapture(e.pointerId); startSpin(dir); });
+  b.addEventListener('pointerup', endSpin); b.addEventListener('pointercancel', endSpin);
+  b.addEventListener('contextmenu', e => e.preventDefault());
+}
+$('stopBtn').onclick = () => { S.joy = null; S.keys.clear(); endSpin(); ollie.stop(S.heading); };
+
+/* ---- aim / calibrate ---- */
+function aimTo(offset) { $('aimRange').value = offset; ollie.roll(0, S.aimBase + offset, true); }
+$('aimBtn').onclick = () => {
+  if (!ollie.connected) return;
+  S.aiming = true; S.joy = null; S.aimBase = S.heading;
+  $('aimPanel').hidden = false; $('aimClosed').hidden = true; $('aimRange').value = 0;
+  ollie.stop(S.heading); ollie.rgb(0, 0, 0); ollie.backLed(255);
+};
+$('aimRange').oninput = e => aimTo(+e.target.value);
+$('aimL').onclick = () => aimTo(Math.max(-180, +$('aimRange').value - 10));
+$('aimR').onclick = () => aimTo(Math.min(180, +$('aimRange').value + 10));
+function exitAim(commit) {
+  if (!S.aiming) return;
+  S.aiming = false; $('aimPanel').hidden = true; $('aimClosed').hidden = false;
+  if (commit && ollie.connected) {
+    ollie.setHeading(0); S.heading = 0; S.last.heading = 0;
+    ollie.backLed(0); applyColor(...S.color);
+  }
+}
+$('aimDone').onclick = () => exitAim(true);
+
+/* ---- colour ---- */
+const PRESETS = [[42, 167, 232], [255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 140, 0], [200, 0, 255], [255, 255, 255], [0, 0, 0]];
+const swWrap = $('swatches');
+PRESETS.forEach((c, i) => {
+  const b = document.createElement('button');
+  b.className = 'sw'; b.style.background = `rgb(${c})`; b.title = i === 7 ? 'Off' : `Colour ${i + 1}`;
+  b.onclick = () => applyColor(...c);
+  swWrap.insertBefore(b, $('colorPick'));
+});
+function applyColor(r, g, b) {
+  S.color = [r, g, b];
+  [...swWrap.querySelectorAll('.sw')].forEach((el, i) => el.classList.toggle('sel', PRESETS[i].join() === S.color.join()));
+  if (!S.aiming) ollie.rgb(r, g, b);
+}
+$('colorPick').oninput = e => { const h = e.target.value; applyColor(parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)); };
+
+$('sleepBtn').onclick = () => { ollie.stop(S.heading); ollie.sleep(); setTimeout(() => ollie.disconnect(), 400); };
+
+/* ---- keyboard ---- */
+const KEYMAP = { ArrowUp: 'f', w: 'f', ArrowDown: 'b', s: 'b', ArrowLeft: 'l', a: 'l', ArrowRight: 'r', d: 'r' };
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' && e.target.type !== 'checkbox' && e.target.type !== 'range') return;
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (KEYMAP[k]) { S.keys.add(KEYMAP[k]); e.preventDefault(); }
+  else if (k === ' ' || k === 'Escape') { $('stopBtn').click(); e.preventDefault(); }
+  else if ((k === 'q' || k === 'e') && !e.repeat) startSpin(k === 'q' ? -1 : 1);
+  else if (/^[1-8]$/.test(k)) applyColor(...PRESETS[+k - 1]);
+});
+addEventListener('keyup', e => {
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (KEYMAP[k]) S.keys.delete(KEYMAP[k]);
+  if (k === 'q' || k === 'e') endSpin();
+});
+addEventListener('blur', () => { S.keys.clear(); S.joy = null; endSpin(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && ollie.connected) { S.keys.clear(); S.joy = null; endSpin(); ollie.stop(S.heading); } });
+
+/* ---- drive loop ---- */
+let lastTick = performance.now();
+let keyShift = false;
+addEventListener('keydown', e => { if (e.key === 'Shift') keyShift = true; });
+addEventListener('keyup', e => { if (e.key === 'Shift') keyShift = false; });
+function tick(now) {
+  const dt = Math.min(0.1, (now - lastTick) / 1000); lastTick = now;
+  if (ollie.connected && !S.aiming && !S.spinning) {
+    let speed = 0, heading = S.heading, moving = false;
+    if (S.joy) {
+      if (S.joy.mag > 0) { S.heading = S.joy.heading; heading = S.heading; speed = S.joy.mag * cap(); moving = true; }
+    } else if (S.keys.size) {
+      if (S.keys.has('l')) S.heading -= 150 * dt;
+      if (S.keys.has('r')) S.heading += 150 * dt;
+      S.heading = (S.heading + 360) % 360;
+      heading = S.heading;
+      const fullSpeed = keyShift ? 255 : cap();
+      if (S.keys.has('f')) { speed = fullSpeed; moving = true; }
+      else if (S.keys.has('b')) { speed = fullSpeed * 0.7; heading = (S.heading + 180) % 360; moving = true; }
+      else moving = S.keys.has('l') || S.keys.has('r');   // turn on the spot
+    }
+    const L = S.last, dh = Math.abs(((heading - L.heading + 540) % 360) - 180);
+    if (moving) {
+      if (Math.abs(speed - L.speed) >= 3 || dh >= 3 || now - L.t > 400) {
+        ollie.roll(speed, heading, true); S.last = { speed, heading, t: now };
+      }
+    } else if (L.speed !== 0 || L.moving) {
+      ollie.stop(L.heading); S.last = { speed: 0, heading: L.heading, t: now };
+    }
+    S.last.moving = moving;
+    $('readout').textContent = `speed ${Math.round(speed / 255 * 100)}% · heading ${Math.round(heading)}°`;
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
