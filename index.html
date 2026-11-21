@@ -91,6 +91,7 @@
   <div class="card">
     <div id="padWrap"><div id="pad"><span class="fwd">forward</span><div id="knob"></div></div></div>
     <div id="readout">speed 0 · heading 0°</div>
+    <div id="stats" style="text-align:center;font:11px/1.4 ui-monospace,monospace;color:var(--dim);word-break:break-word">sent 0 · received 0 · failed 0</div>
     <div style="margin-top:12px">
       <div class="lbl"><span>Top speed</span><span id="capVal"></span></div>
       <input type="range" id="cap" min="20" max="255" value="110">
@@ -160,7 +161,7 @@
   addEventListener('load', function () {
     show((window.__ollieReady ? 'Controller started OK' : 'CONTROLLER SCRIPT DID NOT START') +
       ' · bluetooth API: ' + (navigator.bluetooth ? 'yes' : 'no') +
-      ' · requestDevice: ' + (navigator.bluetooth && typeof navigator.bluetooth.requestDevice) + ' · build 3');
+      ' · requestDevice: ' + (navigator.bluetooth && typeof navigator.bluetooth.requestDevice) + ' · build 4');
   });
 })();
 </script>
@@ -237,6 +238,7 @@ class Ollie {
     this.log = log; this.queue = []; this.busy = false; this.pending = new Map();
     this.parser = new ResponseParser(p => this._onPacket(p), e => log('rx ' + e));
     this.onDisconnect = () => {};
+    this.stats = { tx: 0, rx: 0, err: 0, last: '' }; this.onStats = () => {};
   }
   get connected() { return !!(this.device && this.device.gatt.connected && this.cmd); }
 
@@ -265,10 +267,10 @@ class Ollie {
       this.rsp = await robot.getCharacteristic(UUID.response);
       this.rsp.addEventListener('characteristicvaluechanged', e => {
         const v = e.target.value, bytes = new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
-        this.log('rx ' + hex(bytes)); this.parser.push(bytes);
+        this.stats.rx++; this.onStats(); this.log('rx ' + hex(bytes)); this.parser.push(bytes);
       });
       await this.rsp.startNotifications();
-    } catch (e) { this.log('notifications unavailable: ' + e.message); }
+    } catch (e) { this.stats.last = 'notifications unavailable: ' + e.message; this.log(this.stats.last); }
     await new Promise(r => setTimeout(r, 300)); // give the CPU a moment to boot
     Proto.resetSeq();
     return this.device.name || 'Ollie';
@@ -282,10 +284,25 @@ class Ollie {
     this.pending.clear(); this.onDisconnect();
   }
 
+  // Browsers differ in which write calls they implement (Bluefy's shim is not Chrome's), so try each
+  // available one and remember the first that works for this characteristic and mode.
   async _writeChar(ch, bytes, withResponse) {
-    if (!withResponse && ch.properties.writeWithoutResponse && ch.writeValueWithoutResponse) return ch.writeValueWithoutResponse(bytes);
-    if (ch.writeValueWithResponse) return ch.writeValueWithResponse(bytes);
-    return ch.writeValue(bytes);
+    const props = ch.properties || {};
+    const order = withResponse
+      ? ['writeValueWithResponse', 'writeValue', 'writeValueWithoutResponse']
+      : (props.writeWithoutResponse === false
+        ? ['writeValueWithResponse', 'writeValue']
+        : ['writeValueWithoutResponse', 'writeValue', 'writeValueWithResponse']);
+    const memo = (ch.__ok = ch.__ok || {}), key = withResponse ? 'r' : 'n';
+    const names = (memo[key] ? [memo[key]] : order).filter(n => typeof ch[n] === 'function');
+    if (!names.length) throw new Error('this browser offers no way to write to a characteristic');
+    let lastErr;
+    for (const n of names) {
+      try { await ch[n](bytes); if (memo[key] !== n) { memo[key] = n; this.log('write method: ' + n); } return; }
+      catch (e) { lastErr = e; this.log(n + ' failed: ' + (e && e.message || e)); }
+    }
+    memo[key] = null;
+    throw lastErr;
   }
 
   // key: coalesce — a newer packet with the same key replaces an unsent older one (keeps driving snappy)
@@ -310,8 +327,9 @@ class Ollie {
     this.busy = true;
     while (this.queue.length && this.cmd) {
       const { pkt } = this.queue.shift();
-      try { await this._writeChar(this.cmd, pkt.bytes, false); this.log('tx ' + hex(pkt.bytes)); }
-      catch (e) { this.log('tx error: ' + e.message); await new Promise(r => setTimeout(r, 30)); }
+      try { await this._writeChar(this.cmd, pkt.bytes, false); this.stats.tx++; this.log('tx ' + hex(pkt.bytes)); }
+      catch (e) { this.stats.err++; this.stats.last = String(e && e.message || e); this.log('tx error: ' + this.stats.last); await new Promise(r => setTimeout(r, 30)); }
+      this.onStats();
     }
     this.busy = false;
   }
@@ -345,6 +363,7 @@ const $ = id => document.getElementById(id);
 const logEl = $('log');
 const log = s => { logEl.textContent += s + '\n'; if (logEl.textContent.length > 20000) logEl.textContent = logEl.textContent.slice(-15000); logEl.scrollTop = logEl.scrollHeight; };
 const ollie = new Ollie(log);
+ollie.onStats = () => { const t = ollie.stats; $('stats').textContent = `sent ${t.tx} · received ${t.rx} · failed ${t.err}` + (t.last ? ' · ' + t.last : ''); };
 
 const S = {
   heading: 0,        // heading Ollie should face (0 = calibrated forward)
